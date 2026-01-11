@@ -1,10 +1,21 @@
-import { sql } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'PUT') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    return res.status(500).json({
+      error: 'Database connection string not found',
+      hint: 'Set POSTGRES_URL environment variable in Vercel'
+    });
+  }
+
+  const pool = createPool({ connectionString });
 
   try {
     const { taskId, sourceColumnId, destinationColumnId, destinationIndex } = req.body;
@@ -16,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const now = new Date().toISOString();
 
     // Get current task position
-    const taskResult = await sql`
+    const taskResult = await pool.sql`
       SELECT position FROM tasks WHERE id = ${taskId}
     `;
 
@@ -30,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Moving within the same column
       if (destinationIndex > currentPosition) {
         // Moving down
-        await sql`
+        await pool.sql`
           UPDATE tasks
           SET position = position - 1
           WHERE column_id = ${sourceColumnId}
@@ -39,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `;
       } else if (destinationIndex < currentPosition) {
         // Moving up
-        await sql`
+        await pool.sql`
           UPDATE tasks
           SET position = position + 1
           WHERE column_id = ${sourceColumnId}
@@ -49,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Update task position
-      await sql`
+      await pool.sql`
         UPDATE tasks
         SET position = ${destinationIndex}, updated_at = ${now}
         WHERE id = ${taskId}
@@ -57,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       // Moving to a different column
       // Decrease positions in source column
-      await sql`
+      await pool.sql`
         UPDATE tasks
         SET position = position - 1
         WHERE column_id = ${sourceColumnId}
@@ -65,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `;
 
       // Increase positions in destination column
-      await sql`
+      await pool.sql`
         UPDATE tasks
         SET position = position + 1
         WHERE column_id = ${destinationColumnId}
@@ -73,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `;
 
       // Move task to new column
-      await sql`
+      await pool.sql`
         UPDATE tasks
         SET column_id = ${destinationColumnId}, position = ${destinationIndex}, updated_at = ${now}
         WHERE id = ${taskId}

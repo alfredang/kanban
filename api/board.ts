@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -6,14 +6,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    return res.status(500).json({
+      error: 'Database connection string not found',
+      hint: 'Set POSTGRES_URL environment variable in Vercel'
+    });
+  }
+
+  const pool = createPool({ connectionString });
+
   try {
     // Fetch all columns
-    const columnsResult = await sql`
+    const columnsResult = await pool.sql`
       SELECT id, title, position FROM columns ORDER BY position
     `;
 
     // Fetch all tasks with their tags
-    const tasksResult = await sql`
+    const tasksResult = await pool.sql`
       SELECT
         t.id,
         t.title,

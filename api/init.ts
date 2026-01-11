@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -6,9 +6,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    return res.status(500).json({
+      error: 'Database connection string not found',
+      hint: 'Set POSTGRES_URL environment variable in Vercel'
+    });
+  }
+
+  const pool = createPool({ connectionString });
+
   try {
     // Create columns table
-    await sql`
+    await pool.sql`
       CREATE TABLE IF NOT EXISTS columns (
         id VARCHAR(50) PRIMARY KEY,
         title VARCHAR(100) NOT NULL,
@@ -17,7 +28,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
     // Create tasks table
-    await sql`
+    await pool.sql`
       CREATE TABLE IF NOT EXISTS tasks (
         id VARCHAR(50) PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
@@ -31,7 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
     // Create tags table
-    await sql`
+    await pool.sql`
       CREATE TABLE IF NOT EXISTS tags (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) UNIQUE NOT NULL
@@ -39,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
     // Create task_tags junction table
-    await sql`
+    await pool.sql`
       CREATE TABLE IF NOT EXISTS task_tags (
         task_id VARCHAR(50) REFERENCES tasks(id) ON DELETE CASCADE,
         tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
@@ -48,7 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
     // Insert default columns if they don't exist
-    await sql`
+    await pool.sql`
       INSERT INTO columns (id, title, position)
       VALUES
         ('column-1', 'To Do', 0),

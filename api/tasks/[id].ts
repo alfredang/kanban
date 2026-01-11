@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -8,22 +8,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Invalid task ID' });
   }
 
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    return res.status(500).json({
+      error: 'Database connection string not found',
+      hint: 'Set POSTGRES_URL environment variable in Vercel'
+    });
+  }
+
+  const pool = createPool({ connectionString });
+
   if (req.method === 'PUT') {
-    return updateTask(id, req, res);
+    return updateTask(id, req, res, pool);
   } else if (req.method === 'DELETE') {
-    return deleteTask(id, res);
+    return deleteTask(id, res, pool);
   } else {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 }
 
-async function updateTask(id: string, req: VercelRequest, res: VercelResponse) {
+async function updateTask(id: string, req: VercelRequest, res: VercelResponse, pool: any) {
   try {
     const { title, description, priority, tags } = req.body;
     const now = new Date().toISOString();
 
     // Update the task
-    await sql`
+    await pool.sql`
       UPDATE tasks
       SET
         title = COALESCE(${title}, title),
@@ -36,24 +47,24 @@ async function updateTask(id: string, req: VercelRequest, res: VercelResponse) {
     // Update tags if provided
     if (tags !== undefined) {
       // Remove existing tags
-      await sql`
+      await pool.sql`
         DELETE FROM task_tags WHERE task_id = ${id}
       `;
 
       // Add new tags
       for (const tagName of tags) {
-        await sql`
+        await pool.sql`
           INSERT INTO tags (name)
           VALUES (${tagName})
           ON CONFLICT (name) DO NOTHING
         `;
 
-        const tagResult = await sql`
+        const tagResult = await pool.sql`
           SELECT id FROM tags WHERE name = ${tagName}
         `;
 
         if (tagResult.rows[0]) {
-          await sql`
+          await pool.sql`
             INSERT INTO task_tags (task_id, tag_id)
             VALUES (${id}, ${tagResult.rows[0].id})
             ON CONFLICT DO NOTHING
@@ -63,7 +74,7 @@ async function updateTask(id: string, req: VercelRequest, res: VercelResponse) {
     }
 
     // Fetch updated task
-    const taskResult = await sql`
+    const taskResult = await pool.sql`
       SELECT
         t.id,
         t.title,
@@ -104,9 +115,9 @@ async function updateTask(id: string, req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function deleteTask(id: string, res: VercelResponse) {
+async function deleteTask(id: string, res: VercelResponse, pool: any) {
   try {
-    const result = await sql`
+    const result = await pool.sql`
       DELETE FROM tasks WHERE id = ${id} RETURNING id
     `;
 
