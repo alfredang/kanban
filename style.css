@@ -299,6 +299,115 @@ body {
   border-color: var(--gray-600);
 }
 
+/* Share & Join Buttons */
+.btn-share {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--gray-700);
+  color: var(--gray-400);
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-share:hover {
+  color: white;
+  border-color: var(--violet-500);
+  background: rgba(139, 92, 246, 0.1);
+}
+
+/* Collab Badge */
+.collab-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--emerald-400);
+  padding: 0.3rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.collab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--emerald-400);
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Share Modal */
+.share-modal {
+  max-width: 420px;
+}
+
+.share-desc {
+  color: var(--gray-400);
+  font-size: 0.85rem;
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+.room-code {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: 0.4rem;
+  color: white;
+  text-align: center;
+  padding: 0.5rem 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.qr-container {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+.qr-container canvas,
+.qr-container img {
+  border-radius: 8px;
+}
+
+.copy-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.copy-row input {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  background: var(--gray-800);
+  border: 1px solid var(--gray-700);
+  border-radius: 8px;
+  color: var(--gray-300);
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+}
+
+.btn-copy {
+  padding: 0.55rem 1rem !important;
+  white-space: nowrap;
+}
+
+.collab-info {
+  text-align: center;
+  color: var(--emerald-400);
+  font-size: 0.8rem;
+  margin-top: 0.75rem;
+}
+
 /* ===== Board ===== */
 .board-page {
   min-height: 100vh;

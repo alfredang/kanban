@@ -96,6 +96,23 @@
         <span class="header-title">Kanban Board</span>
       </div>
       <div class="header-right">
+        <span id="collab-badge" class="collab-badge" style="display:none;">
+          <span class="collab-dot"></span>
+          <span id="collab-count">1</span> online
+        </span>
+        <button id="btn-share" class="btn-share" onclick="openShareModal()" title="Share Board">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          Share
+        </button>
+        <button id="btn-join" class="btn-share" onclick="openJoinModal()" title="Join Board">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v-2"/><polyline points="17 8 21 12 17 16"/><line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          Join
+        </button>
         <img id="user-avatar" class="user-avatar" src="" alt="User" />
         <span id="user-email" class="user-email"></span>
         <button class="btn-signout" onclick="signOut()">
@@ -195,6 +212,55 @@
       </form>
     </div>
   </div>
+
+  <!-- Share Modal -->
+  <div id="share-modal" class="modal-overlay" style="display:none;" onclick="if(e=event,e.target===e.currentTarget)closeShareModal()">
+    <div class="modal share-modal">
+      <h2 class="modal-heading">Share Board</h2>
+
+      <!-- Setup state -->
+      <div id="share-setup">
+        <p class="share-desc">Generate a join code so others can collaborate on your board in real-time.</p>
+        <button class="btn-submit" onclick="generateRoomCode()" style="width:100%;">Generate Join Code</button>
+      </div>
+
+      <!-- Active state -->
+      <div id="share-active" style="display:none;">
+        <p class="share-desc">Share this code or QR with collaborators:</p>
+        <div class="room-code" id="room-code-display">------</div>
+        <div id="qrcode" class="qr-container"></div>
+        <div class="copy-row">
+          <input type="text" id="share-link" readonly />
+          <button class="btn-submit btn-copy" onclick="copyShareLink()">Copy</button>
+        </div>
+        <p class="collab-info" id="share-collab-info">1 person online</p>
+        <button class="btn-cancel" onclick="stopSharing()" style="width:100%;margin-top:0.75rem;">Stop Sharing</button>
+      </div>
+
+      <div class="modal-actions" style="margin-top:1rem;">
+        <button type="button" class="btn-cancel" onclick="closeShareModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Modal -->
+  <div id="join-modal" class="modal-overlay" style="display:none;" onclick="if(e=event,e.target===e.currentTarget)closeJoinModal()">
+    <div class="modal">
+      <h2 class="modal-heading">Join Board</h2>
+      <p class="share-desc">Enter the 6-digit code to join someone's board.</p>
+      <div class="form-group">
+        <label for="join-code-input">Join Code</label>
+        <input type="text" id="join-code-input" placeholder="e.g. 482913" maxlength="6" pattern="[0-9]{6}" />
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeJoinModal()">Cancel</button>
+        <button class="btn-submit" onclick="joinRoom()">Join Board</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Code Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>

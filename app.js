@@ -4,6 +4,12 @@ let tasks = {}; // { id: { id, title, description, priority, tags, column, posit
 let draggedTaskId = null;
 let unsubscribe = null; // Firestore listener
 
+// Sharing state
+let currentRoomCode = null;
+let isSharedBoard = false; // true if viewing someone else's board
+let sharedBoardOwnerId = null; // the host's userId when on a shared board
+let roomUnsubscribe = null;
+
 // ===== Auth =====
 function signInWithGoogle() {
   if (!firebaseReady) return;
@@ -18,6 +24,7 @@ function signInWithGitHub() {
 }
 
 function signOut() {
+  leaveSharedBoard();
   auth.signOut();
 }
 
@@ -33,7 +40,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (user) {
       currentUser = user;
       showBoard(user);
-      subscribeToTasks(user.uid);
+
+      // Check if joining via ?room= parameter
+      const params = new URLSearchParams(window.location.search);
+      const roomCode = params.get("room");
+      if (roomCode) {
+        joinRoomByCode(roomCode);
+      } else {
+        subscribeToTasks(user.uid);
+      }
     } else {
       currentUser = null;
       if (unsubscribe) {
@@ -61,7 +76,6 @@ function showBoard(user) {
 }
 
 function generateAvatar(email) {
-  // Simple placeholder avatar using UI Avatars
   const name = (email || "U").charAt(0).toUpperCase();
   return `https://ui-avatars.com/api/?name=${name}&background=7c3aed&color=fff&size=64`;
 }
@@ -85,22 +99,48 @@ function subscribeToTasks(uid) {
     });
 }
 
+// Subscribe to a shared board's tasks (by owner's userId)
+function subscribeToSharedTasks(ownerUid) {
+  if (unsubscribe) unsubscribe();
+
+  unsubscribe = db
+    .collection("tasks")
+    .where("userId", "==", ownerUid)
+    .orderBy("position")
+    .onSnapshot(snapshot => {
+      tasks = {};
+      snapshot.forEach(doc => {
+        tasks[doc.id] = { id: doc.id, ...doc.data() };
+      });
+      renderAllColumns();
+    }, err => {
+      console.error("Shared board listen error:", err);
+    });
+}
+
 async function addTask(data) {
   const columnTasks = getColumnTasks(data.column);
   const maxPos = columnTasks.length > 0
     ? Math.max(...columnTasks.map(t => t.position)) + 1
     : 0;
 
-  await db.collection("tasks").add({
+  const taskData = {
     title: data.title,
     description: data.description || "",
     priority: data.priority || "medium",
     tags: data.tags || [],
     column: data.column,
     position: maxPos,
-    userId: currentUser.uid,
+    userId: isSharedBoard ? sharedBoardOwnerId : currentUser.uid,
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-  });
+  };
+
+  // If on a shared board, include sharedWith for security rules
+  if (isSharedBoard) {
+    taskData.sharedWith = firebase.firestore.FieldValue.arrayUnion(currentUser.uid);
+  }
+
+  await db.collection("tasks").add(taskData);
 }
 
 async function updateTask(id, data) {
@@ -123,15 +163,12 @@ async function moveTask(taskId, newColumn, newPosition) {
 
   const batch = db.batch();
 
-  // Get tasks in the target column (excluding the moved task)
   const targetTasks = getColumnTasks(newColumn)
     .filter(t => t.id !== taskId)
     .sort((a, b) => a.position - b.position);
 
-  // Insert at position
   targetTasks.splice(newPosition, 0, { id: taskId });
 
-  // Update all positions in target column
   targetTasks.forEach((t, i) => {
     const ref = db.collection("tasks").doc(t.id);
     if (t.id === taskId) {
@@ -141,7 +178,6 @@ async function moveTask(taskId, newColumn, newPosition) {
     }
   });
 
-  // If moved from a different column, compact the source column
   if (task.column !== newColumn) {
     const sourceTasks = getColumnTasks(task.column)
       .filter(t => t.id !== taskId)
@@ -153,6 +189,247 @@ async function moveTask(taskId, newColumn, newPosition) {
   }
 
   await batch.commit();
+}
+
+// ===== Sharing =====
+function genRoomCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function generateRoomCode() {
+  if (!currentUser) return;
+
+  const code = genRoomCode();
+  currentRoomCode = code;
+
+  // Create room document
+  await db.collection("rooms").doc(code).set({
+    hostId: currentUser.uid,
+    hostEmail: currentUser.email || "",
+    hostName: currentUser.displayName || "",
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    members: [currentUser.uid]
+  });
+
+  // Mark all existing tasks as shared
+  const batch = db.batch();
+  Object.values(tasks).forEach(task => {
+    batch.update(db.collection("tasks").doc(task.id), {
+      sharedWith: [currentUser.uid]
+    });
+  });
+  await batch.commit();
+
+  showShareActive(code);
+}
+
+function showShareActive(code) {
+  document.getElementById("share-setup").style.display = "none";
+  document.getElementById("share-active").style.display = "block";
+  document.getElementById("room-code-display").textContent = code;
+
+  const url = `${window.location.origin}${window.location.pathname}?room=${code}`;
+  document.getElementById("share-link").value = url;
+
+  // Generate QR code
+  const qrEl = document.getElementById("qrcode");
+  qrEl.innerHTML = "";
+  new QRCode(qrEl, {
+    text: url,
+    width: 150,
+    height: 150,
+    colorDark: "#212121",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M
+  });
+
+  // Listen for member changes
+  if (roomUnsubscribe) roomUnsubscribe();
+  roomUnsubscribe = db.collection("rooms").doc(code).onSnapshot(snap => {
+    if (snap.exists) {
+      const data = snap.data();
+      const count = (data.members || []).length;
+      document.getElementById("share-collab-info").textContent = `${count} person${count !== 1 ? "s" : ""} online`;
+      updateCollabBadge(count);
+    }
+  });
+}
+
+async function stopSharing() {
+  if (!currentRoomCode) return;
+
+  // Remove sharedWith from all tasks
+  const batch = db.batch();
+  Object.values(tasks).forEach(task => {
+    batch.update(db.collection("tasks").doc(task.id), {
+      sharedWith: firebase.firestore.FieldValue.delete()
+    });
+  });
+  await batch.commit();
+
+  // Delete room
+  await db.collection("rooms").doc(currentRoomCode).delete();
+
+  if (roomUnsubscribe) {
+    roomUnsubscribe();
+    roomUnsubscribe = null;
+  }
+
+  currentRoomCode = null;
+  updateCollabBadge(0);
+
+  // Reset modal
+  document.getElementById("share-setup").style.display = "block";
+  document.getElementById("share-active").style.display = "none";
+  document.getElementById("qrcode").innerHTML = "";
+  closeShareModal();
+}
+
+async function joinRoomByCode(code) {
+  try {
+    const roomDoc = await db.collection("rooms").doc(code).get();
+    if (!roomDoc.exists) {
+      alert("Room not found. Check the code and try again.");
+      // Clear the URL param
+      window.history.replaceState({}, "", window.location.pathname);
+      subscribeToTasks(currentUser.uid);
+      return;
+    }
+
+    const roomData = roomDoc.data();
+    sharedBoardOwnerId = roomData.hostId;
+    isSharedBoard = true;
+    currentRoomCode = code;
+
+    // Add self to members
+    await db.collection("rooms").doc(code).update({
+      members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+    });
+
+    // Update header to show shared state
+    document.getElementById("btn-share").style.display = "none";
+    document.getElementById("btn-join").innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+      Leave
+    `;
+    document.getElementById("btn-join").setAttribute("onclick", "leaveSharedBoard()");
+    document.getElementById("btn-join").title = "Leave shared board";
+
+    // Listen for member count
+    if (roomUnsubscribe) roomUnsubscribe();
+    roomUnsubscribe = db.collection("rooms").doc(code).onSnapshot(snap => {
+      if (snap.exists) {
+        const count = (snap.data().members || []).length;
+        updateCollabBadge(count);
+      } else {
+        // Host stopped sharing
+        alert("The host has stopped sharing this board.");
+        leaveSharedBoard();
+      }
+    });
+
+    // Subscribe to the host's tasks
+    subscribeToSharedTasks(sharedBoardOwnerId);
+
+    // Clear URL param
+    window.history.replaceState({}, "", window.location.pathname);
+
+  } catch (err) {
+    console.error("Join room error:", err);
+    alert("Failed to join room. Please try again.");
+    subscribeToTasks(currentUser.uid);
+  }
+}
+
+function leaveSharedBoard() {
+  if (currentRoomCode && isSharedBoard && currentUser) {
+    // Remove self from members
+    db.collection("rooms").doc(currentRoomCode).update({
+      members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+    }).catch(() => {});
+  }
+
+  if (roomUnsubscribe) {
+    roomUnsubscribe();
+    roomUnsubscribe = null;
+  }
+
+  isSharedBoard = false;
+  sharedBoardOwnerId = null;
+  currentRoomCode = null;
+
+  updateCollabBadge(0);
+
+  // Restore header buttons
+  document.getElementById("btn-share").style.display = "flex";
+  document.getElementById("btn-join").innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v-2"/><polyline points="17 8 21 12 17 16"/><line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+    Join
+  `;
+  document.getElementById("btn-join").setAttribute("onclick", "openJoinModal()");
+  document.getElementById("btn-join").title = "Join Board";
+
+  // Go back to own board
+  if (currentUser) {
+    subscribeToTasks(currentUser.uid);
+  }
+}
+
+function updateCollabBadge(count) {
+  const badge = document.getElementById("collab-badge");
+  if (count > 1 || isSharedBoard) {
+    badge.style.display = "flex";
+    document.getElementById("collab-count").textContent = count;
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+function copyShareLink() {
+  const input = document.getElementById("share-link");
+  navigator.clipboard.writeText(input.value).then(() => {
+    const btn = input.nextElementSibling;
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+}
+
+// ===== Share Modal =====
+function openShareModal() {
+  document.getElementById("share-modal").style.display = "flex";
+  // If already sharing, show active state
+  if (currentRoomCode && !isSharedBoard) {
+    showShareActive(currentRoomCode);
+  }
+}
+
+function closeShareModal() {
+  document.getElementById("share-modal").style.display = "none";
+}
+
+// ===== Join Modal =====
+function openJoinModal() {
+  document.getElementById("join-code-input").value = "";
+  document.getElementById("join-modal").style.display = "flex";
+  document.getElementById("join-code-input").focus();
+}
+
+function closeJoinModal() {
+  document.getElementById("join-modal").style.display = "none";
+}
+
+function joinRoom() {
+  const code = document.getElementById("join-code-input").value.trim();
+  if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+    alert("Please enter a valid 6-digit code.");
+    return;
+  }
+  closeJoinModal();
+  joinRoomByCode(code);
 }
 
 // ===== Helpers =====
@@ -193,7 +470,6 @@ function renderColumn(column) {
 
   list.innerHTML = columnTasks.map(task => createTaskCardHTML(task)).join("");
 
-  // Attach drag events to cards
   list.querySelectorAll(".task-card").forEach(card => {
     card.addEventListener("dragstart", handleDragStart);
     card.addEventListener("dragend", handleDragEnd);
@@ -273,7 +549,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     list.addEventListener("dragleave", e => {
-      // Only remove if actually leaving the list
       if (!list.contains(e.relatedTarget)) {
         list.classList.remove("drag-over");
       }
@@ -288,9 +563,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const column = list.dataset.column;
 
-      // Determine drop position based on mouse Y
       const cards = [...list.querySelectorAll(".task-card:not(.dragging)")];
-      let dropIndex = cards.length; // default: end
+      let dropIndex = cards.length;
 
       for (let i = 0; i < cards.length; i++) {
         const rect = cards[i].getBoundingClientRect();
@@ -306,7 +580,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// ===== Modal =====
+// ===== Task Modal =====
 function openModal(column) {
   document.getElementById("modal-title").textContent = "Add Task";
   document.getElementById("modal-submit-btn").textContent = "Add Task";
@@ -369,7 +643,11 @@ function handleFormSubmit(e) {
   closeModal();
 }
 
-// Close modal on Escape
+// Close modals on Escape
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") closeModal();
+  if (e.key === "Escape") {
+    closeModal();
+    closeShareModal();
+    closeJoinModal();
+  }
 });
