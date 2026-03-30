@@ -232,6 +232,12 @@ body {
   font-weight: 500;
 }
 
+.board-footer {
+  text-align: center;
+  padding: 1rem 0;
+  margin-top: auto;
+}
+
 .feature-icon-violet {
   background: rgba(139, 92, 246, 0.15);
   color: var(--violet-400);
